@@ -5,7 +5,8 @@
   "description": "SilentCyber web app preparada para Render Node Deploy",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "stop:windows": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force\""
   },
   "engines": {
     "node": ">=20"

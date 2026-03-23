@@ -251,6 +251,17 @@ initDb()
     console.error("No se pudo iniciar la base de datos:", error.message);
   })
   .finally(() => {
+    server.on("error", (error) => {
+      if (error && error.code === "EADDRINUSE") {
+        console.error(`El puerto ${port} ya esta en uso.`);
+        console.error("Cierra la instancia anterior de SilentCyber o cambia el puerto.");
+        console.error("En PowerShell puedes ejecutar: Get-Process node | Stop-Process -Force");
+        return;
+      }
+
+      console.error("No se pudo iniciar el servidor:", error.message);
+    });
+
     server.listen(port, host, () => {
       console.log(`Servidor listo en http://${host}:${port}`);
     });
