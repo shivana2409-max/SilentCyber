@@ -56,8 +56,8 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function defaultDisplayName(email) {
-  return email.split("@")[0] || "usuario";
+function getAnonymousName(id) {
+  return `anonimo${id}`;
 }
 
 async function ensureColumn(tableName, columnName, sqlDefinition) {
@@ -66,6 +66,37 @@ async function ensureColumn(tableName, columnName, sqlDefinition) {
 
   if (!exists) {
     await run(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${sqlDefinition}`);
+  }
+}
+
+async function normalizeExistingDisplayNames() {
+  const users = await all(`
+    SELECT id, email, display_name
+    FROM users
+    ORDER BY id ASC
+  `);
+
+  const seen = new Set();
+
+  for (const user of users) {
+    const emailPrefix = user.email.split("@")[0] || "";
+    let nextDisplayName = (user.display_name || "").trim();
+    const shouldReplace =
+      !nextDisplayName ||
+      nextDisplayName.toLowerCase() === emailPrefix.toLowerCase();
+
+    if (shouldReplace || seen.has(nextDisplayName.toLowerCase())) {
+      nextDisplayName = getAnonymousName(user.id);
+    }
+
+    seen.add(nextDisplayName.toLowerCase());
+
+    if (nextDisplayName !== user.display_name) {
+      await run(
+        "UPDATE users SET display_name = ? WHERE id = ?",
+        [nextDisplayName, user.id]
+      );
+    }
   }
 }
 
@@ -80,8 +111,10 @@ async function initDb() {
   `);
 
   await ensureColumn("users", "display_name", "TEXT");
+  await ensureColumn("users", "avatar_data", "TEXT");
+  await normalizeExistingDisplayNames();
   await run(
-    "UPDATE users SET display_name = COALESCE(display_name, substr(email, 1, instr(email, '@') - 1))"
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_display_name_nocase ON users(display_name COLLATE NOCASE)"
   );
 
   await run(`
@@ -106,10 +139,13 @@ async function initDb() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       email TEXT NOT NULL,
       display_name TEXT NOT NULL,
+      avatar_data TEXT,
       message TEXT NOT NULL,
       created_at TEXT NOT NULL
     )
   `);
+
+  await ensureColumn("chat_messages", "avatar_data", "TEXT");
 }
 
 async function createSession(email) {
@@ -121,16 +157,22 @@ async function createSession(email) {
   return token;
 }
 
-async function buildAuthPayload(email) {
-  const user = await get(
-    "SELECT email, display_name FROM users WHERE email = ?",
+async function getUserByEmail(email) {
+  return get(
+    "SELECT id, email, display_name, avatar_data FROM users WHERE email = ?",
     [email]
   );
+}
+
+async function buildAuthPayload(email) {
+  const user = await getUserByEmail(email);
   const token = await createSession(email);
 
   return {
     email: user.email,
-    displayName: user.display_name || defaultDisplayName(email),
+    userNumber: user.id,
+    displayName: user.display_name,
+    avatarData: user.avatar_data || "",
     token
   };
 }
@@ -138,11 +180,15 @@ async function buildAuthPayload(email) {
 async function createUser(email, password) {
   const normalizedEmail = email.trim().toLowerCase();
   const createdAt = nowIso();
-  const displayName = defaultDisplayName(normalizedEmail);
+
+  const result = await run(
+    "INSERT INTO users (email, password_hash, created_at, display_name, avatar_data) VALUES (?, ?, ?, NULL, NULL)",
+    [normalizedEmail, hashPassword(password), createdAt]
+  );
 
   await run(
-    "INSERT INTO users (email, password_hash, created_at, display_name) VALUES (?, ?, ?, ?)",
-    [normalizedEmail, hashPassword(password), createdAt, displayName]
+    "UPDATE users SET display_name = ? WHERE id = ?",
+    [getAnonymousName(result.lastID), result.lastID]
   );
 
   await run(
@@ -175,6 +221,7 @@ async function loginUser(email, password) {
 async function getHistory() {
   const users = await all(`
     SELECT
+      users.id,
       users.email,
       users.display_name,
       users.created_at,
@@ -182,7 +229,7 @@ async function getHistory() {
     FROM users
     LEFT JOIN login_history ON login_history.email = users.email
     GROUP BY users.id
-    ORDER BY COALESCE(MAX(login_history.logged_in_at), users.created_at) DESC
+    ORDER BY users.id ASC
   `);
 
   return { users };
@@ -195,7 +242,7 @@ async function getUserByToken(token) {
 
   return get(
     `
-      SELECT users.email, users.display_name
+      SELECT users.id, users.email, users.display_name, users.avatar_data
       FROM sessions
       INNER JOIN users ON users.email = sessions.email
       WHERE sessions.token = ?
@@ -206,36 +253,56 @@ async function getUserByToken(token) {
   );
 }
 
-async function updateDisplayName(email, displayName) {
-  await run(
-    "UPDATE users SET display_name = ? WHERE email = ?",
-    [displayName, email]
+async function isDisplayNameTaken(displayName, excludedEmail = "") {
+  const user = await get(
+    "SELECT email FROM users WHERE display_name = ? COLLATE NOCASE",
+    [displayName]
   );
 
-  return get(
-    "SELECT email, display_name FROM users WHERE email = ?",
-    [email]
-  );
+  if (!user) {
+    return false;
+  }
+
+  return user.email !== excludedEmail;
+}
+
+async function updateProfile(email, profile) {
+  const updates = [];
+  const params = [];
+
+  if (Object.prototype.hasOwnProperty.call(profile, "displayName")) {
+    updates.push("display_name = ?");
+    params.push(profile.displayName);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(profile, "avatarData")) {
+    updates.push("avatar_data = ?");
+    params.push(profile.avatarData);
+  }
+
+  if (!updates.length) {
+    return getUserByEmail(email);
+  }
+
+  params.push(email);
+  await run(`UPDATE users SET ${updates.join(", ")} WHERE email = ?`, params);
+
+  return getUserByEmail(email);
 }
 
 async function createChatMessage(email, message) {
-  const user = await get(
-    "SELECT display_name FROM users WHERE email = ?",
-    [email]
-  );
-  const createdAt = nowIso();
-  const displayName = user?.display_name || defaultDisplayName(email);
+  const user = await getUserByEmail(email);
 
   await run(
-    "INSERT INTO chat_messages (email, display_name, message, created_at) VALUES (?, ?, ?, ?)",
-    [email, displayName, message, createdAt]
+    "INSERT INTO chat_messages (email, display_name, avatar_data, message, created_at) VALUES (?, ?, ?, ?, ?)",
+    [email, user.display_name, user.avatar_data || "", message, nowIso()]
   );
 }
 
 async function getChatMessages(limit = 50) {
   const rows = await all(
     `
-      SELECT id, email, display_name, message, created_at
+      SELECT id, email, display_name, avatar_data, message, created_at
       FROM chat_messages
       ORDER BY id DESC
       LIMIT ?
@@ -252,7 +319,9 @@ module.exports = {
   loginUser,
   getHistory,
   getUserByToken,
-  updateDisplayName,
+  isDisplayNameTaken,
+  updateProfile,
   createChatMessage,
-  getChatMessages
+  getChatMessages,
+  getAnonymousName
 };

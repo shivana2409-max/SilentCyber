@@ -12,6 +12,11 @@
     <span id="serverBadgeValue" class="server-badge-value">Local</span>
   </div>
 
+  <button id="profileDock" class="profile-dock" hidden>
+    <span id="profileDockAvatar" class="avatar avatar-dock">SC</span>
+    <span id="profileDockName" class="profile-dock-name">anonimo</span>
+  </button>
+
   <main class="page">
     <section class="card hero">
       <p class="eyebrow">Panel de informacion</p>
@@ -77,11 +82,16 @@
         <form id="profileForm" class="auth-form profile-form">
           <label class="field">
             <span>Cambiar nombre visible</span>
-            <input id="displayNameInput" type="text" maxlength="32" placeholder="Tu nombre visible">
+            <input id="displayNameInput" type="text" maxlength="15" placeholder="Tu nombre visible">
+          </label>
+
+          <label class="field">
+            <span>Foto de perfil</span>
+            <input id="avatarInput" type="file" accept="image/png,image/jpeg,image/jpg,image/webp,image/gif">
           </label>
 
           <div class="auth-actions">
-            <button type="submit" id="saveProfileBtn" class="action-btn">Guardar nombre</button>
+            <button type="submit" id="saveProfileBtn" class="action-btn">Guardar perfil</button>
           </div>
         </form>
 

@@ -3,6 +3,9 @@ const deviceInfo = document.getElementById("deviceInfo");
 const serverHint = document.getElementById("serverHint");
 const serverBadge = document.getElementById("serverBadge");
 const serverBadgeValue = document.getElementById("serverBadgeValue");
+const profileDock = document.getElementById("profileDock");
+const profileDockAvatar = document.getElementById("profileDockAvatar");
+const profileDockName = document.getElementById("profileDockName");
 const authForm = document.getElementById("authForm");
 const emailInput = document.getElementById("emailInput");
 const passwordInput = document.getElementById("passwordInput");
@@ -17,6 +20,7 @@ const communitySection = document.getElementById("communitySection");
 const profileInfo = document.getElementById("profileInfo");
 const profileForm = document.getElementById("profileForm");
 const displayNameInput = document.getElementById("displayNameInput");
+const avatarInput = document.getElementById("avatarInput");
 const saveProfileBtn = document.getElementById("saveProfileBtn");
 const profileStatus = document.getElementById("profileStatus");
 const chatMessages = document.getElementById("chatMessages");
@@ -27,6 +31,7 @@ const chatStatus = document.getElementById("chatStatus");
 
 let currentServerMode = "local";
 let currentUser = null;
+let pendingAvatarData = null;
 let chatPollId = null;
 
 function isServerMode() {
@@ -74,6 +79,21 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function getAvatarText(name) {
+  const cleaned = (name || "SC").replace(/[^a-z0-9]/gi, "");
+  return cleaned.slice(0, 2).toUpperCase() || "SC";
+}
+
+function renderAvatarMarkup(user, extraClass = "") {
+  const classes = ["avatar", extraClass].filter(Boolean).join(" ");
+
+  if (user?.avatarData) {
+    return `<span class="${classes}"><img src="${escapeHtml(user.avatarData)}" alt="Avatar"></span>`;
+  }
+
+  return `<span class="${classes}">${escapeHtml(getAvatarText(user?.displayName))}</span>`;
 }
 
 function renderInfo(container, items, note = "") {
@@ -139,6 +159,21 @@ function stopChatPolling() {
   }
 }
 
+function syncProfileDock(user) {
+  if (!user) {
+    profileDock.hidden = true;
+    profileDockName.textContent = "";
+    profileDockAvatar.innerHTML = "SC";
+    return;
+  }
+
+  profileDock.hidden = false;
+  profileDockName.textContent = user.displayName || "anonimo";
+  profileDockAvatar.innerHTML = user.avatarData
+    ? `<img src="${escapeHtml(user.avatarData)}" alt="Avatar">`
+    : escapeHtml(getAvatarText(user.displayName));
+}
+
 function renderProfile(user) {
   if (!user) {
     profileInfo.classList.add("empty");
@@ -147,11 +182,18 @@ function renderProfile(user) {
     return;
   }
 
+  profileInfo.classList.remove("empty");
+  profileInfo.innerHTML = `
+    <div class="profile-summary">
+      ${renderAvatarMarkup(user, "avatar-large")}
+      <div class="profile-meta">
+        <strong>${escapeHtml(user.displayName)}</strong>
+        <span class="note">Usuario #${escapeHtml(user.userNumber)}</span>
+        <span class="note">${escapeHtml(user.email)}</span>
+      </div>
+    </div>
+  `;
   displayNameInput.value = user.displayName || "";
-  renderInfo(profileInfo, [
-    { label: "Correo", value: user.email || "No disponible" },
-    { label: "Nombre visible", value: user.displayName || "No disponible" }
-  ]);
 }
 
 function renderChatMessages(messages) {
@@ -166,11 +208,17 @@ function renderChatMessages(messages) {
     .map(
       (message) => `
         <article class="chat-item">
-          <div class="chat-header">
-            <strong class="chat-name">${escapeHtml(message.display_name)}</strong>
-            <span class="chat-meta">${escapeHtml(formatDate(message.created_at))}</span>
+          ${renderAvatarMarkup(
+            { displayName: message.display_name, avatarData: message.avatar_data || "" },
+            ""
+          )}
+          <div class="chat-body">
+            <div class="chat-header">
+              <strong class="chat-name">${escapeHtml(message.display_name)}</strong>
+              <span class="chat-meta">${escapeHtml(formatDate(message.created_at))}</span>
+            </div>
+            <div class="chat-text">${escapeHtml(message.message)}</div>
           </div>
-          <div class="chat-text">${escapeHtml(message.message)}</div>
         </article>
       `
     )
@@ -185,13 +233,14 @@ function setLoggedInState(user) {
   deviceSection.hidden = !isLoggedIn;
   communitySection.hidden = !isLoggedIn;
   logoutBtn.hidden = !isLoggedIn;
+  syncProfileDock(currentUser);
 
   if (isLoggedIn) {
     emailInput.value = currentUser.email;
     localStorage.setItem("silentCyberLastEmail", currentUser.email);
-    setAuthStatus(`Sesion iniciada como ${currentUser.email}.`);
+    setAuthStatus(`Sesion iniciada como ${currentUser.displayName}.`);
     renderProfile(currentUser);
-    setProfileStatus("Puedes cambiar tu nombre visible cuando quieras.");
+    setProfileStatus("Puedes cambiar tu nombre visible y tu foto.");
     setChatStatus("Los mensajes se actualizan automaticamente.");
     startChatPolling();
   } else {
@@ -229,7 +278,6 @@ async function sendJson(url, payload, options = {}) {
     "Content-Type": "application/json",
     ...options.headers
   };
-
   const response = await fetch(url, {
     method: options.method || "POST",
     headers,
@@ -475,7 +523,9 @@ async function loadCurrentUser() {
     const data = await authFetch("/api/me");
     setLoggedInState({
       email: data.email,
-      displayName: data.displayName
+      userNumber: data.userNumber,
+      displayName: data.displayName,
+      avatarData: data.avatarData || ""
     });
     await loadQuickSpecs();
     await loadChatMessages(true);
@@ -512,9 +562,15 @@ async function submitAuth(action) {
     const data = await sendJson(url, { email, password });
     setAuthToken(data.token || "");
     passwordInput.value = "";
+    pendingAvatarData = null;
+    if (avatarInput) {
+      avatarInput.value = "";
+    }
     setLoggedInState({
       email: data.email,
-      displayName: data.displayName
+      userNumber: data.userNumber,
+      displayName: data.displayName,
+      avatarData: data.avatarData || ""
     });
     await loadQuickSpecs();
     await loadChatMessages(true);
@@ -529,6 +585,41 @@ async function submitAuth(action) {
   }
 }
 
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("No se pudo leer la imagen."));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function handleAvatarSelection() {
+  const file = avatarInput.files?.[0];
+  if (!file) {
+    pendingAvatarData = null;
+    return;
+  }
+
+  if (file.size > 700 * 1024) {
+    avatarInput.value = "";
+    pendingAvatarData = null;
+    setProfileStatus("La foto debe pesar menos de 700 KB.", true);
+    return;
+  }
+
+  try {
+    pendingAvatarData = await readFileAsDataUrl(file);
+    setProfileStatus("Foto lista para guardar.");
+  } catch (error) {
+    pendingAvatarData = null;
+    setProfileStatus(
+      error instanceof Error ? error.message : "No se pudo cargar la foto.",
+      true
+    );
+  }
+}
+
 async function saveProfile(event) {
   event.preventDefault();
 
@@ -538,18 +629,18 @@ async function saveProfile(event) {
   }
 
   const displayName = displayNameInput.value.trim();
-  if (!displayName) {
-    setProfileStatus("Debes escribir un nombre visible.", true);
-    return;
-  }
-
   saveProfileBtn.disabled = true;
   setProfileStatus("Guardando perfil...");
 
   try {
+    const payload = { displayName };
+    if (pendingAvatarData !== null) {
+      payload.avatarData = pendingAvatarData;
+    }
+
     const data = await sendJson(
       "/api/profile",
-      { displayName },
+      payload,
       {
         method: "PATCH",
         headers: {
@@ -560,10 +651,16 @@ async function saveProfile(event) {
 
     currentUser = {
       email: data.email,
-      displayName: data.displayName
+      userNumber: data.userNumber,
+      displayName: data.displayName,
+      avatarData: data.avatarData || ""
     };
+    pendingAvatarData = null;
+    avatarInput.value = "";
+    syncProfileDock(currentUser);
     renderProfile(currentUser);
-    setProfileStatus("Nombre actualizado correctamente.");
+    setAuthStatus(`Sesion iniciada como ${currentUser.displayName}.`);
+    setProfileStatus("Perfil actualizado correctamente.");
     await loadChatMessages(true);
   } catch (error) {
     setProfileStatus(
@@ -674,12 +771,20 @@ registerBtn.addEventListener("click", async () => {
 
 logoutBtn.addEventListener("click", () => {
   setAuthToken("");
+  pendingAvatarData = null;
   passwordInput.value = "";
+  avatarInput.value = "";
   setLoggedInState(null);
 });
 
 profileForm.addEventListener("submit", saveProfile);
+avatarInput.addEventListener("change", handleAvatarSelection);
 chatForm.addEventListener("submit", sendChatMessage);
+
+profileDock.addEventListener("click", () => {
+  communitySection.scrollIntoView({ behavior: "smooth", block: "start" });
+  displayNameInput.focus();
+});
 
 if (!isServerMode()) {
   showServerHint();

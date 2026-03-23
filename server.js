@@ -9,7 +9,8 @@ const {
   loginUser,
   getHistory,
   getUserByToken,
-  updateDisplayName,
+  isDisplayNameTaken,
+  updateProfile,
   createChatMessage,
   getChatMessages
 } = require("./db");
@@ -17,6 +18,7 @@ const {
 const host = "0.0.0.0";
 const port = Number(process.env.PORT || 3000);
 const rootDir = __dirname;
+const maxJsonBytes = 2 * 1024 * 1024;
 
 function getServerMode() {
   return process.env.RENDER ? "online" : "local";
@@ -27,6 +29,29 @@ const contentTypes = {
   ".css": "text/css; charset=utf-8",
   ".js": "application/javascript; charset=utf-8"
 };
+
+const bannedExactWords = new Set([
+  "nig",
+  "nigga",
+  "nigger",
+  "puta",
+  "puto",
+  "mierda",
+  "porno",
+  "porn",
+  "sexo",
+  "sex",
+  "rape",
+  "violar",
+  "violacion",
+  "bitch",
+  "fuck",
+  "asshole",
+  "maricon",
+  "faggot",
+  "nazi",
+  "hitler"
+]);
 
 function sendJson(res, statusCode, payload) {
   res.writeHead(statusCode, {
@@ -56,7 +81,7 @@ function readJsonBody(req) {
 
     req.on("data", (chunk) => {
       body += chunk;
-      if (body.length > 1024 * 1024) {
+      if (body.length > maxJsonBytes) {
         reject(new Error("Solicitud demasiado grande."));
       }
     });
@@ -94,6 +119,63 @@ async function requireAuth(req, res) {
   }
 
   return user;
+}
+
+function normalizeText(value) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function containsBannedContent(value) {
+  const normalized = normalizeText(value);
+  const tokens = normalized.split(/[^a-z0-9]+/).filter(Boolean);
+  return tokens.some((token) => bannedExactWords.has(token));
+}
+
+function validateDisplayName(displayName) {
+  if (!displayName) {
+    return "Debes escribir un nombre visible.";
+  }
+
+  if (displayName.length > 15) {
+    return "El nombre no puede superar 15 caracteres.";
+  }
+
+  if (!/^[a-zA-Z0-9]+$/u.test(displayName)) {
+    return "El nombre solo puede tener letras y numeros.";
+  }
+
+  if (containsBannedContent(displayName)) {
+    return "Ese nombre no esta permitido.";
+  }
+
+  return "";
+}
+
+function validateMessage(message) {
+  if (!message) {
+    return "El mensaje no puede estar vacio.";
+  }
+
+  if (message.length > 300) {
+    return "El mensaje no puede superar 300 caracteres.";
+  }
+
+  if (containsBannedContent(message)) {
+    return "Ese mensaje no esta permitido.";
+  }
+
+  return "";
+}
+
+function isValidAvatarDataUrl(value) {
+  if (!value) {
+    return true;
+  }
+
+  return /^data:image\/(png|jpeg|jpg|webp|gif);base64,[a-z0-9+/=]+$/i.test(value);
 }
 
 function runPowerShell(command) {
@@ -248,7 +330,9 @@ const server = http.createServer(async (req, res) => {
 
       sendJson(res, 200, {
         email: user.email,
-        displayName: user.display_name
+        userNumber: user.id,
+        displayName: user.display_name,
+        avatarData: user.avatar_data || ""
       });
       return;
     }
@@ -260,22 +344,47 @@ const server = http.createServer(async (req, res) => {
       }
 
       const payload = await readJsonBody(req);
+      const hasDisplayName = Object.prototype.hasOwnProperty.call(payload, "displayName");
+      const hasAvatarData = Object.prototype.hasOwnProperty.call(payload, "avatarData");
       const displayName = String(payload.displayName || "").trim();
+      const avatarData = String(payload.avatarData || "");
 
-      if (displayName.length < 2) {
-        sendJson(res, 400, { error: "El nombre debe tener al menos 2 caracteres." });
-        return;
+      if (hasDisplayName) {
+        const errorMessage = validateDisplayName(displayName);
+        if (errorMessage) {
+          sendJson(res, 400, { error: errorMessage });
+          return;
+        }
+
+        const nameTaken = await isDisplayNameTaken(displayName, user.email);
+        if (nameTaken) {
+          sendJson(res, 400, { error: "Ese nombre ya esta en uso." });
+          return;
+        }
       }
 
-      if (displayName.length > 32) {
-        sendJson(res, 400, { error: "El nombre no puede superar 32 caracteres." });
-        return;
+      if (hasAvatarData) {
+        if (!isValidAvatarDataUrl(avatarData)) {
+          sendJson(res, 400, { error: "La foto de perfil no es valida." });
+          return;
+        }
+
+        if (avatarData.length > 900000) {
+          sendJson(res, 400, { error: "La foto de perfil es demasiado grande." });
+          return;
+        }
       }
 
-      const updatedUser = await updateDisplayName(user.email, displayName);
+      const updatedUser = await updateProfile(user.email, {
+        ...(hasDisplayName ? { displayName } : {}),
+        ...(hasAvatarData ? { avatarData } : {})
+      });
+
       sendJson(res, 200, {
         email: updatedUser.email,
-        displayName: updatedUser.display_name
+        userNumber: updatedUser.id,
+        displayName: updatedUser.display_name,
+        avatarData: updatedUser.avatar_data || ""
       });
       return;
     }
@@ -299,14 +408,10 @@ const server = http.createServer(async (req, res) => {
 
       const payload = await readJsonBody(req);
       const message = String(payload.message || "").trim();
+      const errorMessage = validateMessage(message);
 
-      if (!message) {
-        sendJson(res, 400, { error: "El mensaje no puede estar vacio." });
-        return;
-      }
-
-      if (message.length > 300) {
-        sendJson(res, 400, { error: "El mensaje no puede superar 300 caracteres." });
+      if (errorMessage) {
+        sendJson(res, 400, { error: errorMessage });
         return;
       }
 
@@ -323,6 +428,11 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (requestUrl.pathname === "/api/device") {
+      const user = await requireAuth(req, res);
+      if (!user) {
+        return;
+      }
+
       try {
         const data = await getDeviceInfo();
         sendJson(res, 200, data);
