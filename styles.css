@@ -16,6 +16,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -131,19 +135,22 @@ h2 {
   margin: 0;
 }
 
-.info-grid {
+.info-grid,
+.chat-list {
   display: grid;
   gap: 12px;
 }
 
 .info-grid.empty,
+.chat-list.empty,
 .status,
 .note,
 .lock-copy {
   color: var(--muted);
 }
 
-.info-item {
+.info-item,
+.chat-item {
   display: flex;
   justify-content: space-between;
   gap: 14px;
@@ -153,7 +160,8 @@ h2 {
   border-radius: 16px;
 }
 
-.label {
+.label,
+.chat-meta {
   color: var(--muted);
 }
 
@@ -161,6 +169,26 @@ h2 {
   text-align: right;
   font-weight: 700;
   max-width: 65%;
+}
+
+.chat-item {
+  display: grid;
+  gap: 8px;
+}
+
+.chat-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.chat-name {
+  font-weight: 800;
+}
+
+.chat-text {
+  line-height: 1.45;
 }
 
 .note {
@@ -177,9 +205,14 @@ h2 {
   color: #ffdba1;
 }
 
-.auth-form {
+.auth-form,
+.chat-form {
   display: grid;
   gap: 14px;
+}
+
+.profile-form {
+  margin-top: 18px;
 }
 
 .field {
@@ -192,7 +225,8 @@ h2 {
   font-size: 0.95rem;
 }
 
-.field input {
+.field input,
+.field textarea {
   width: 100%;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 16px;
@@ -201,9 +235,11 @@ h2 {
   color: var(--text);
   font: inherit;
   outline: none;
+  resize: vertical;
 }
 
-.field input:focus {
+.field input:focus,
+.field textarea:focus {
   border-color: rgba(78, 162, 255, 0.52);
   box-shadow: 0 0 0 3px rgba(78, 162, 255, 0.14);
 }
@@ -260,15 +296,6 @@ h2 {
   cursor: wait;
 }
 
-.history-item {
-  width: 100%;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  color: var(--text);
-  font: inherit;
-  cursor: pointer;
-  text-align: left;
-}
-
 .lock-card {
   text-align: center;
 }
@@ -295,7 +322,8 @@ h2 {
   }
 
   .section-head,
-  .info-item {
+  .info-item,
+  .chat-header {
     flex-direction: column;
   }
 

@@ -3,7 +3,16 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { execFile } = require("child_process");
-const { initDb, createUser, loginUser, getHistory } = require("./db");
+const {
+  initDb,
+  createUser,
+  loginUser,
+  getHistory,
+  getUserByToken,
+  updateDisplayName,
+  createChatMessage,
+  getChatMessages
+} = require("./db");
 
 const host = "0.0.0.0";
 const port = Number(process.env.PORT || 3000);
@@ -66,6 +75,27 @@ function readJsonBody(req) {
   });
 }
 
+function readAuthToken(req) {
+  const header = req.headers.authorization || "";
+  if (!header.startsWith("Bearer ")) {
+    return "";
+  }
+
+  return header.slice("Bearer ".length).trim();
+}
+
+async function requireAuth(req, res) {
+  const token = readAuthToken(req);
+  const user = await getUserByToken(token);
+
+  if (!user) {
+    sendJson(res, 401, { error: "Sesion invalida o expirada." });
+    return null;
+  }
+
+  return user;
+}
+
 function runPowerShell(command) {
   return new Promise((resolve, reject) => {
     execFile(
@@ -118,13 +148,8 @@ async function getWindowsDeviceInfo() {
   return JSON.parse(raw);
 }
 
-function formatBytesToGb(bytes) {
-  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
-}
-
 function getGenericServerDeviceInfo() {
   const cpus = os.cpus();
-  const primaryCpu = cpus[0]?.model || "No disponible";
 
   return {
     device_type: "Servidor",
@@ -134,8 +159,8 @@ function getGenericServerDeviceInfo() {
     os: `${os.type()} ${os.release()}`,
     os_version: os.version ? os.version() : "No disponible",
     architecture: os.arch(),
-    ram: formatBytesToGb(os.totalmem()),
-    processor: primaryCpu,
+    ram: `${(os.totalmem() / 1024 / 1024 / 1024).toFixed(2)} GB`,
+    processor: cpus[0]?.model || "No disponible",
     gpu: "No disponible en entorno cloud",
     baseboard: "No disponible en entorno cloud",
     bios: "No disponible en entorno cloud",
@@ -144,6 +169,10 @@ function getGenericServerDeviceInfo() {
 }
 
 async function getDeviceInfo() {
+  if (getServerMode() === "online") {
+    throw new Error("En modo online solo se permite deteccion del navegador del usuario.");
+  }
+
   if (process.platform === "win32") {
     return getWindowsDeviceInfo();
   }
@@ -211,6 +240,82 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (requestUrl.pathname === "/api/me" && req.method === "GET") {
+      const user = await requireAuth(req, res);
+      if (!user) {
+        return;
+      }
+
+      sendJson(res, 200, {
+        email: user.email,
+        displayName: user.display_name
+      });
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/profile" && req.method === "PATCH") {
+      const user = await requireAuth(req, res);
+      if (!user) {
+        return;
+      }
+
+      const payload = await readJsonBody(req);
+      const displayName = String(payload.displayName || "").trim();
+
+      if (displayName.length < 2) {
+        sendJson(res, 400, { error: "El nombre debe tener al menos 2 caracteres." });
+        return;
+      }
+
+      if (displayName.length > 32) {
+        sendJson(res, 400, { error: "El nombre no puede superar 32 caracteres." });
+        return;
+      }
+
+      const updatedUser = await updateDisplayName(user.email, displayName);
+      sendJson(res, 200, {
+        email: updatedUser.email,
+        displayName: updatedUser.display_name
+      });
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/chat/messages" && req.method === "GET") {
+      const user = await requireAuth(req, res);
+      if (!user) {
+        return;
+      }
+
+      const messages = await getChatMessages(50);
+      sendJson(res, 200, { messages });
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/chat/messages" && req.method === "POST") {
+      const user = await requireAuth(req, res);
+      if (!user) {
+        return;
+      }
+
+      const payload = await readJsonBody(req);
+      const message = String(payload.message || "").trim();
+
+      if (!message) {
+        sendJson(res, 400, { error: "El mensaje no puede estar vacio." });
+        return;
+      }
+
+      if (message.length > 300) {
+        sendJson(res, 400, { error: "El mensaje no puede superar 300 caracteres." });
+        return;
+      }
+
+      await createChatMessage(user.email, message);
+      const messages = await getChatMessages(50);
+      sendJson(res, 200, { messages });
+      return;
+    }
+
     if (requestUrl.pathname === "/api/auth/history" && req.method === "GET") {
       const result = await getHistory();
       sendJson(res, 200, result);
@@ -218,8 +323,14 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (requestUrl.pathname === "/api/device") {
-      const data = await getDeviceInfo();
-      sendJson(res, 200, data);
+      try {
+        const data = await getDeviceInfo();
+        sendJson(res, 200, data);
+      } catch (error) {
+        sendJson(res, 400, {
+          error: error instanceof Error ? error.message : "No se pudo leer el dispositivo."
+        });
+      }
       return;
     }
 

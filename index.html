@@ -17,10 +17,10 @@
       <p class="eyebrow">Panel de informacion</p>
       <h1>SilentCyber</h1>
       <p class="subtitle">
-        Inicia sesion primero y luego consulta la mayor cantidad de informacion posible de tu PC o celular.
+        Inicia sesion primero, revisa tu perfil, cambia tu nombre y conversa en el chat global.
       </p>
       <p id="serverHint" class="note server-hint" hidden>
-        Para usar SilentCyber completo, abre la pagina desde `http://127.0.0.1:3000`.
+        En modo online se mostraran datos del navegador del usuario, no del servidor.
       </p>
     </section>
 
@@ -62,8 +62,54 @@
       <article class="card result-card lock-card">
         <h2>Acceso protegido</h2>
         <p class="lock-copy">
-          Inicia sesion para desbloquear la informacion del dispositivo.
+          Inicia sesion para desbloquear la informacion del dispositivo, el perfil y el chat global.
         </p>
+      </article>
+    </section>
+
+    <section id="communitySection" class="results community-layout" hidden>
+      <article class="card result-card">
+        <h2>Tu perfil</h2>
+        <div id="profileInfo" class="info-grid empty">
+          Inicia sesion para cargar tu perfil.
+        </div>
+
+        <form id="profileForm" class="auth-form profile-form">
+          <label class="field">
+            <span>Cambiar nombre visible</span>
+            <input id="displayNameInput" type="text" maxlength="32" placeholder="Tu nombre visible">
+          </label>
+
+          <div class="auth-actions">
+            <button type="submit" id="saveProfileBtn" class="action-btn">Guardar nombre</button>
+          </div>
+        </form>
+
+        <div id="profileStatus" class="note">
+          Tu nombre visible saldra en el chat global.
+        </div>
+      </article>
+
+      <article class="card result-card">
+        <h2>Chat global</h2>
+        <div id="chatMessages" class="chat-list empty">
+          Inicia sesion para entrar al chat global.
+        </div>
+
+        <form id="chatForm" class="chat-form">
+          <label class="field">
+            <span>Mensaje</span>
+            <textarea id="chatInput" rows="3" maxlength="300" placeholder="Escribe algo al chat global..."></textarea>
+          </label>
+
+          <div class="auth-actions">
+            <button type="submit" id="sendChatBtn" class="action-btn secondary">Enviar mensaje</button>
+          </div>
+        </form>
+
+        <div id="chatStatus" class="note">
+          Los mensajes se actualizan automaticamente.
+        </div>
       </article>
     </section>
 
