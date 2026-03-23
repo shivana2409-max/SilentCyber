@@ -13,6 +13,21 @@ const authStatus = document.getElementById("authStatus");
 const quickSpecs = document.getElementById("quickSpecs");
 const appLock = document.getElementById("appLock");
 const deviceSection = document.getElementById("deviceSection");
+const communitySection = document.getElementById("communitySection");
+const profileInfo = document.getElementById("profileInfo");
+const profileForm = document.getElementById("profileForm");
+const displayNameInput = document.getElementById("displayNameInput");
+const saveProfileBtn = document.getElementById("saveProfileBtn");
+const profileStatus = document.getElementById("profileStatus");
+const chatMessages = document.getElementById("chatMessages");
+const chatForm = document.getElementById("chatForm");
+const chatInput = document.getElementById("chatInput");
+const sendChatBtn = document.getElementById("sendChatBtn");
+const chatStatus = document.getElementById("chatStatus");
+
+let currentServerMode = "local";
+let currentUser = null;
+let chatPollId = null;
 
 function isServerMode() {
   return window.location.protocol.startsWith("http");
@@ -29,13 +44,27 @@ function showServerHint() {
 }
 
 function setServerBadge(mode) {
+  currentServerMode = mode === "online" ? "online" : "local";
+
   if (!serverBadge || !serverBadgeValue) {
     return;
   }
 
-  const normalizedMode = mode === "online" ? "Online" : "Local";
+  const normalizedMode = currentServerMode === "online" ? "Online" : "Local";
   serverBadgeValue.textContent = normalizedMode;
   serverBadge.classList.toggle("online", normalizedMode === "Online");
+}
+
+function getAuthToken() {
+  return localStorage.getItem("silentCyberToken") || "";
+}
+
+function setAuthToken(token) {
+  if (token) {
+    localStorage.setItem("silentCyberToken", token);
+  } else {
+    localStorage.removeItem("silentCyberToken");
+  }
 }
 
 function escapeHtml(value) {
@@ -73,22 +102,108 @@ function setAuthStatus(message, isError = false) {
   authStatus.style.color = isError ? "#ffb4b4" : "";
 }
 
-function setLoggedInState(userEmail) {
-  const isLoggedIn = Boolean(userEmail);
+function setProfileStatus(message, isError = false) {
+  profileStatus.textContent = message;
+  profileStatus.style.color = isError ? "#ffb4b4" : "";
+}
+
+function setChatStatus(message, isError = false) {
+  chatStatus.textContent = message;
+  chatStatus.style.color = isError ? "#ffb4b4" : "";
+}
+
+function formatDate(value) {
+  if (!value) {
+    return "Sin fecha";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString("es-CL");
+}
+
+function startChatPolling() {
+  stopChatPolling();
+  chatPollId = window.setInterval(() => {
+    loadChatMessages(false);
+  }, 5000);
+}
+
+function stopChatPolling() {
+  if (chatPollId) {
+    window.clearInterval(chatPollId);
+    chatPollId = null;
+  }
+}
+
+function renderProfile(user) {
+  if (!user) {
+    profileInfo.classList.add("empty");
+    profileInfo.textContent = "Inicia sesion para cargar tu perfil.";
+    displayNameInput.value = "";
+    return;
+  }
+
+  displayNameInput.value = user.displayName || "";
+  renderInfo(profileInfo, [
+    { label: "Correo", value: user.email || "No disponible" },
+    { label: "Nombre visible", value: user.displayName || "No disponible" }
+  ]);
+}
+
+function renderChatMessages(messages) {
+  if (!messages.length) {
+    chatMessages.classList.add("empty");
+    chatMessages.textContent = "Todavia no hay mensajes en el chat global.";
+    return;
+  }
+
+  chatMessages.classList.remove("empty");
+  chatMessages.innerHTML = messages
+    .map(
+      (message) => `
+        <article class="chat-item">
+          <div class="chat-header">
+            <strong class="chat-name">${escapeHtml(message.display_name)}</strong>
+            <span class="chat-meta">${escapeHtml(formatDate(message.created_at))}</span>
+          </div>
+          <div class="chat-text">${escapeHtml(message.message)}</div>
+        </article>
+      `
+    )
+    .join("");
+}
+
+function setLoggedInState(user) {
+  currentUser = user || null;
+  const isLoggedIn = Boolean(currentUser);
+
   appLock.hidden = isLoggedIn;
   deviceSection.hidden = !isLoggedIn;
+  communitySection.hidden = !isLoggedIn;
   logoutBtn.hidden = !isLoggedIn;
-  localStorage.setItem("silentCyberLoggedInEmail", userEmail || "");
 
   if (isLoggedIn) {
-    emailInput.value = userEmail;
-    setAuthStatus(`Sesion iniciada como ${userEmail}.`);
+    emailInput.value = currentUser.email;
+    localStorage.setItem("silentCyberLastEmail", currentUser.email);
+    setAuthStatus(`Sesion iniciada como ${currentUser.email}.`);
+    renderProfile(currentUser);
+    setProfileStatus("Puedes cambiar tu nombre visible cuando quieras.");
+    setChatStatus("Los mensajes se actualizan automaticamente.");
+    startChatPolling();
   } else {
     setAuthStatus("Debes iniciar sesion antes de ver la informacion del dispositivo.");
     deviceInfo.classList.add("empty");
     deviceInfo.textContent = "Inicia sesion y luego presiona el boton para analizar tu dispositivo.";
     quickSpecs.classList.add("empty");
     quickSpecs.textContent = "Inicia sesion para ver procesador, RAM y tarjeta madre.";
+    renderProfile(null);
+    chatMessages.classList.add("empty");
+    chatMessages.textContent = "Inicia sesion para entrar al chat global.";
+    stopChatPolling();
   }
 }
 
@@ -109,16 +224,32 @@ async function parseJsonResponse(response, defaultMessage) {
   return data;
 }
 
-async function sendJson(url, payload) {
+async function sendJson(url, payload, options = {}) {
+  const headers = {
+    "Content-Type": "application/json",
+    ...options.headers
+  };
+
   const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
+    method: options.method || "POST",
+    headers,
     body: JSON.stringify(payload)
   });
 
   return parseJsonResponse(response, "No se pudo procesar la solicitud.");
+}
+
+async function authFetch(url, options = {}) {
+  const token = getAuthToken();
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+      Authorization: `Bearer ${token}`
+    }
+  });
+
+  return parseJsonResponse(response, "No se pudo completar la solicitud.");
 }
 
 function getGpuRenderer() {
@@ -136,10 +267,6 @@ function getGpuRenderer() {
 
   const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
   return renderer || "No disponible";
-}
-
-function getDeviceKindLabel() {
-  return isMobileDevice() ? "Celular / tablet" : "PC / laptop";
 }
 
 function getConnectionLabel() {
@@ -176,8 +303,12 @@ async function getStorageEstimateLabel() {
 
   try {
     const estimate = await navigator.storage.estimate();
-    const quota = estimate.quota ? `${(estimate.quota / 1024 / 1024 / 1024).toFixed(2)} GB` : "No disponible";
-    const usage = estimate.usage ? `${(estimate.usage / 1024 / 1024).toFixed(2)} MB` : "No disponible";
+    const quota = estimate.quota
+      ? `${(estimate.quota / 1024 / 1024 / 1024).toFixed(2)} GB`
+      : "No disponible";
+    const usage = estimate.usage
+      ? `${(estimate.usage / 1024 / 1024).toFixed(2)} MB`
+      : "No disponible";
     return `Uso: ${usage} / Cuota: ${quota}`;
   } catch (error) {
     return "No disponible";
@@ -195,7 +326,7 @@ function getApproxModel() {
     return "iPad";
   }
 
-  const androidMatch = ua.match(/Android[\s\/-]*[\d.]*;?\s*([^;)\n]+)/i);
+  const androidMatch = ua.match(/Android[\s/-]*[\d.]*;?\s*([^;)\n]+)/i);
   if (androidMatch?.[1]) {
     return androidMatch[1].trim();
   }
@@ -221,14 +352,16 @@ async function getBrowserDeviceData() {
   const platform = navigator.userAgentData?.platform || navigator.platform || "No disponible";
   const resolution = `${window.screen.width} x ${window.screen.height}`;
   const viewport = `${window.innerWidth} x ${window.innerHeight}`;
-  const deviceType = getDeviceKindLabel();
+  const deviceType = isMobileDevice() ? "Celular / tablet" : "PC / laptop";
+
   const items = [
     { label: "Tipo de dispositivo", value: deviceType },
     { label: "Modelo aproximado", value: getApproxModel() },
     { label: "Sistema / plataforma", value: platform },
     { label: "RAM", value: ram },
     { label: "Procesador", value: processor },
-    { label: "GPU", value: getGpuRenderer() },
+    { label: "Tarjeta grafica", value: getGpuRenderer() },
+    { label: "Tarjeta madre", value: "No disponible desde navegador" },
     { label: "Resolucion de pantalla", value: resolution },
     { label: "Tamano de ventana", value: viewport },
     { label: "Pixel ratio", value: String(window.devicePixelRatio || 1) },
@@ -244,35 +377,29 @@ async function getBrowserDeviceData() {
     items,
     note: isMobileDevice()
       ? "En celulares el navegador solo expone datos parciales del hardware real."
-      : "Mostrando datos detectados desde el navegador."
+      : "En modo online se muestran datos del navegador del usuario."
   };
 }
 
 async function getLocalDeviceData() {
-  const response = await fetch("/api/device");
-  const data = await parseJsonResponse(
-    response,
-    "No se pudo leer la informacion del equipo."
-  );
-
-  const items = [
-    { label: "Tipo de dispositivo", value: data.device_type || "PC / laptop" },
-    { label: "Nombre del equipo", value: data.hostname || "No disponible" },
-    { label: "Fabricante", value: data.manufacturer || "No disponible" },
-    { label: "Modelo", value: data.model || "No disponible" },
-    { label: "Sistema operativo", value: data.os || "No disponible" },
-    { label: "Version", value: data.os_version || "No disponible" },
-    { label: "Arquitectura", value: data.architecture || "No disponible" },
-    { label: "RAM", value: data.ram || "No disponible" },
-    { label: "Procesador", value: data.processor || "No disponible" },
-    { label: "Tarjeta grafica", value: data.gpu || "No disponible" },
-    { label: "Placa madre", value: data.baseboard || "No disponible" },
-    { label: "BIOS", value: data.bios || "No disponible" },
-    { label: "Discos", value: data.disks || "No disponible" }
-  ];
+  const response = await authFetch("/api/device");
 
   return {
-    items,
+    items: [
+      { label: "Tipo de dispositivo", value: response.device_type || "PC / laptop" },
+      { label: "Nombre del equipo", value: response.hostname || "No disponible" },
+      { label: "Fabricante", value: response.manufacturer || "No disponible" },
+      { label: "Modelo", value: response.model || "No disponible" },
+      { label: "Sistema operativo", value: response.os || "No disponible" },
+      { label: "Version", value: response.os_version || "No disponible" },
+      { label: "Arquitectura", value: response.architecture || "No disponible" },
+      { label: "RAM", value: response.ram || "No disponible" },
+      { label: "Procesador", value: response.processor || "No disponible" },
+      { label: "Tarjeta grafica", value: response.gpu || "No disponible" },
+      { label: "Tarjeta madre", value: response.baseboard || "No disponible" },
+      { label: "BIOS", value: response.bios || "No disponible" },
+      { label: "Discos", value: response.disks || "No disponible" }
+    ],
     note: "Estos datos se leen localmente desde el sistema."
   };
 }
@@ -292,20 +419,8 @@ async function syncServerBadge() {
   }
 }
 
-async function loadHistory() {
-  if (!isServerMode()) {
-    return;
-  }
-
-  try {
-    await fetch("/api/auth/history");
-  } catch (error) {
-    return;
-  }
-}
-
 async function getBestDeviceData() {
-  if (isServerMode() && !isMobileDevice()) {
+  if (currentServerMode === "local" && !isMobileDevice()) {
     try {
       return await getLocalDeviceData();
     } catch (error) {
@@ -317,8 +432,7 @@ async function getBestDeviceData() {
 }
 
 async function loadQuickSpecs() {
-  const activeUser = localStorage.getItem("silentCyberLoggedInEmail");
-  if (!activeUser) {
+  if (!currentUser) {
     quickSpecs.classList.add("empty");
     quickSpecs.textContent = "Inicia sesion para ver procesador, RAM y tarjeta madre.";
     return;
@@ -336,10 +450,10 @@ async function loadQuickSpecs() {
       [
         { label: "Procesador", value: findValue("Procesador") },
         { label: "RAM", value: findValue("RAM") },
-        { label: "Tarjeta madre", value: findValue("Placa madre") }
+        { label: "Tarjeta madre", value: findValue("Tarjeta madre") }
       ],
-      isMobileDevice()
-        ? "En celular algunos componentes reales pueden no estar disponibles."
+      currentServerMode === "online"
+        ? "Resumen del dispositivo del usuario conectado."
         : "Resumen rapido del equipo actual."
     );
   } catch (error) {
@@ -350,10 +464,31 @@ async function loadQuickSpecs() {
   }
 }
 
+async function loadCurrentUser() {
+  const token = getAuthToken();
+  if (!token) {
+    setLoggedInState(null);
+    return;
+  }
+
+  try {
+    const data = await authFetch("/api/me");
+    setLoggedInState({
+      email: data.email,
+      displayName: data.displayName
+    });
+    await loadQuickSpecs();
+    await loadChatMessages(true);
+  } catch (error) {
+    setAuthToken("");
+    setLoggedInState(null);
+  }
+}
+
 async function submitAuth(action) {
   if (!isServerMode()) {
     setAuthStatus(
-      "Para usar login y base de datos abre SilentCyber con el servidor local.",
+      "Para usar login y base de datos abre SilentCyber con el servidor activo.",
       true
     );
     showServerHint();
@@ -375,11 +510,14 @@ async function submitAuth(action) {
   try {
     const url = action === "register" ? "/api/auth/register" : "/api/auth/login";
     const data = await sendJson(url, { email, password });
-    localStorage.setItem("silentCyberLastEmail", data.email || email);
+    setAuthToken(data.token || "");
     passwordInput.value = "";
-    setLoggedInState(data.email || email);
+    setLoggedInState({
+      email: data.email,
+      displayName: data.displayName
+    });
     await loadQuickSpecs();
-    await loadHistory();
+    await loadChatMessages(true);
   } catch (error) {
     setAuthStatus(
       error instanceof Error ? error.message : "No se pudo completar la operacion.",
@@ -391,9 +529,119 @@ async function submitAuth(action) {
   }
 }
 
+async function saveProfile(event) {
+  event.preventDefault();
+
+  if (!currentUser) {
+    setProfileStatus("Debes iniciar sesion primero.", true);
+    return;
+  }
+
+  const displayName = displayNameInput.value.trim();
+  if (!displayName) {
+    setProfileStatus("Debes escribir un nombre visible.", true);
+    return;
+  }
+
+  saveProfileBtn.disabled = true;
+  setProfileStatus("Guardando perfil...");
+
+  try {
+    const data = await sendJson(
+      "/api/profile",
+      { displayName },
+      {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${getAuthToken()}`
+        }
+      }
+    );
+
+    currentUser = {
+      email: data.email,
+      displayName: data.displayName
+    };
+    renderProfile(currentUser);
+    setProfileStatus("Nombre actualizado correctamente.");
+    await loadChatMessages(true);
+  } catch (error) {
+    setProfileStatus(
+      error instanceof Error ? error.message : "No se pudo guardar el perfil.",
+      true
+    );
+  } finally {
+    saveProfileBtn.disabled = false;
+  }
+}
+
+async function loadChatMessages(showStatus = false) {
+  if (!currentUser) {
+    chatMessages.classList.add("empty");
+    chatMessages.textContent = "Inicia sesion para entrar al chat global.";
+    return;
+  }
+
+  if (showStatus) {
+    setChatStatus("Cargando chat global...");
+  }
+
+  try {
+    const data = await authFetch("/api/chat/messages");
+    renderChatMessages(data.messages || []);
+    if (showStatus) {
+      setChatStatus("Los mensajes se actualizan automaticamente.");
+    }
+  } catch (error) {
+    setChatStatus(
+      error instanceof Error ? error.message : "No se pudo cargar el chat.",
+      true
+    );
+  }
+}
+
+async function sendChatMessage(event) {
+  event.preventDefault();
+
+  if (!currentUser) {
+    setChatStatus("Debes iniciar sesion para usar el chat.", true);
+    return;
+  }
+
+  const message = chatInput.value.trim();
+  if (!message) {
+    setChatStatus("Escribe un mensaje antes de enviarlo.", true);
+    return;
+  }
+
+  sendChatBtn.disabled = true;
+  setChatStatus("Enviando mensaje...");
+
+  try {
+    const data = await sendJson(
+      "/api/chat/messages",
+      { message },
+      {
+        headers: {
+          Authorization: `Bearer ${getAuthToken()}`
+        }
+      }
+    );
+    chatInput.value = "";
+    renderChatMessages(data.messages || []);
+    setChatStatus("Mensaje enviado.");
+  } catch (error) {
+    setChatStatus(
+      error instanceof Error ? error.message : "No se pudo enviar el mensaje.",
+      true
+    );
+  } finally {
+    sendChatBtn.disabled = false;
+  }
+}
+
 deviceBtn.addEventListener("click", async () => {
-  const activeUser = localStorage.getItem("silentCyberLoggedInEmail");
-  if (!activeUser) {
+  if (!currentUser) {
     setAuthStatus("Debes iniciar sesion antes de analizar el dispositivo.", true);
     return;
   }
@@ -404,6 +652,7 @@ deviceBtn.addEventListener("click", async () => {
   try {
     const data = await getBestDeviceData();
     renderInfo(deviceInfo, data.items, data.note);
+    await loadQuickSpecs();
   } catch (error) {
     setStatus(
       deviceInfo,
@@ -424,10 +673,13 @@ registerBtn.addEventListener("click", async () => {
 });
 
 logoutBtn.addEventListener("click", () => {
-  localStorage.removeItem("silentCyberLoggedInEmail");
+  setAuthToken("");
   passwordInput.value = "";
-  setLoggedInState("");
+  setLoggedInState(null);
 });
+
+profileForm.addEventListener("submit", saveProfile);
+chatForm.addEventListener("submit", sendChatMessage);
 
 if (!isServerMode()) {
   showServerHint();
@@ -438,8 +690,9 @@ if (lastEmail) {
   emailInput.value = lastEmail;
 }
 
-const activeUser = localStorage.getItem("silentCyberLoggedInEmail");
-setLoggedInState(activeUser || "");
-loadQuickSpecs();
-syncServerBadge();
-loadHistory();
+async function initializeApp() {
+  await syncServerBadge();
+  await loadCurrentUser();
+}
+
+initializeApp();
