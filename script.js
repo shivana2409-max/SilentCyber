@@ -13,6 +13,7 @@ const loginBtn = document.getElementById("loginBtn");
 const registerBtn = document.getElementById("registerBtn");
 const logoutBtn = document.getElementById("logoutBtn");
 const authStatus = document.getElementById("authStatus");
+const accountReminder = document.getElementById("accountReminder");
 const quickSpecs = document.getElementById("quickSpecs");
 const appLock = document.getElementById("appLock");
 const deviceSection = document.getElementById("deviceSection");
@@ -69,6 +70,41 @@ function setAuthToken(token) {
     localStorage.setItem("silentCyberToken", token);
   } else {
     localStorage.removeItem("silentCyberToken");
+  }
+}
+
+function saveAccountReminder(user) {
+  if (!user) {
+    return;
+  }
+
+  localStorage.setItem(
+    "silentCyberRememberedAccount",
+    JSON.stringify({
+      email: user.email,
+      userNumber: user.userNumber,
+      displayName: user.displayName
+    })
+  );
+}
+
+function renderAccountReminder() {
+  if (!accountReminder) {
+    return;
+  }
+
+  const raw = localStorage.getItem("silentCyberRememberedAccount");
+  if (!raw) {
+    accountReminder.textContent = "No hay cuenta recordada todavia.";
+    return;
+  }
+
+  try {
+    const remembered = JSON.parse(raw);
+    accountReminder.textContent =
+      `Cuenta recordada: ${remembered.displayName} (Usuario #${remembered.userNumber}) - ${remembered.email}`;
+  } catch (error) {
+    accountReminder.textContent = "No hay cuenta recordada todavia.";
   }
 }
 
@@ -238,12 +274,15 @@ function setLoggedInState(user) {
   if (isLoggedIn) {
     emailInput.value = currentUser.email;
     localStorage.setItem("silentCyberLastEmail", currentUser.email);
+    saveAccountReminder(currentUser);
+    renderAccountReminder();
     setAuthStatus(`Sesion iniciada como ${currentUser.displayName}.`);
     renderProfile(currentUser);
     setProfileStatus("Puedes cambiar tu nombre visible y tu foto.");
     setChatStatus("Los mensajes se actualizan automaticamente.");
     startChatPolling();
   } else {
+    renderAccountReminder();
     setAuthStatus("Debes iniciar sesion antes de ver la informacion del dispositivo.");
     deviceInfo.classList.add("empty");
     deviceInfo.textContent = "Inicia sesion y luego presiona el boton para analizar tu dispositivo.";
@@ -532,6 +571,10 @@ async function loadCurrentUser() {
   } catch (error) {
     setAuthToken("");
     setLoggedInState(null);
+    setAuthStatus(
+      error instanceof Error ? error.message : "No se pudo restaurar la sesion.",
+      true
+    );
   }
 }
 
@@ -794,6 +837,8 @@ const lastEmail = localStorage.getItem("silentCyberLastEmail");
 if (lastEmail) {
   emailInput.value = lastEmail;
 }
+
+renderAccountReminder();
 
 async function initializeApp() {
   await syncServerBadge();

@@ -10,9 +10,14 @@ const {
   getHistory,
   getUserByToken,
   isDisplayNameTaken,
+  registerNameWarning,
   updateProfile,
   createChatMessage,
-  getChatMessages
+  getChatMessages,
+  buildUserPayload,
+  getSuspensionMessage,
+  nameWarningLimit,
+  suspensionMinutes
 } = require("./db");
 
 const host = "0.0.0.0";
@@ -111,14 +116,22 @@ function readAuthToken(req) {
 
 async function requireAuth(req, res) {
   const token = readAuthToken(req);
-  const user = await getUserByToken(token);
 
-  if (!user) {
-    sendJson(res, 401, { error: "Sesion invalida o expirada." });
+  try {
+    const user = await getUserByToken(token);
+
+    if (!user) {
+      sendJson(res, 401, { error: "Sesion invalida o expirada." });
+      return null;
+    }
+
+    return user;
+  } catch (error) {
+    sendJson(res, 403, {
+      error: error instanceof Error ? error.message : "Cuenta inhabilitada."
+    });
     return null;
   }
-
-  return user;
 }
 
 function normalizeText(value) {
@@ -176,6 +189,14 @@ function isValidAvatarDataUrl(value) {
   }
 
   return /^data:image\/(png|jpeg|jpg|webp|gif);base64,[a-z0-9+/=]+$/i.test(value);
+}
+
+function buildWarningMessage(result) {
+  if (result.suspended) {
+    return `Cuenta inhabilitada por ${suspensionMinutes} minuto(s) tras ${nameWarningLimit} advertencias de nombre.`;
+  }
+
+  return `Advertencia ${result.warningCount}/${nameWarningLimit}. Sigue intentando y la cuenta se inhabilitara por ${suspensionMinutes} minutos.`;
 }
 
 function runPowerShell(command) {
@@ -328,12 +349,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      sendJson(res, 200, {
-        email: user.email,
-        userNumber: user.id,
-        displayName: user.display_name,
-        avatarData: user.avatar_data || ""
-      });
+      sendJson(res, 200, buildUserPayload(user));
       return;
     }
 
@@ -352,13 +368,19 @@ const server = http.createServer(async (req, res) => {
       if (hasDisplayName) {
         const errorMessage = validateDisplayName(displayName);
         if (errorMessage) {
-          sendJson(res, 400, { error: errorMessage });
+          const warning = await registerNameWarning(user.email);
+          sendJson(res, warning.suspended ? 403 : 400, {
+            error: `${errorMessage} ${buildWarningMessage(warning)}`
+          });
           return;
         }
 
         const nameTaken = await isDisplayNameTaken(displayName, user.email);
         if (nameTaken) {
-          sendJson(res, 400, { error: "Ese nombre ya esta en uso." });
+          const warning = await registerNameWarning(user.email);
+          sendJson(res, warning.suspended ? 403 : 400, {
+            error: `Ese nombre ya esta en uso. ${buildWarningMessage(warning)}`
+          });
           return;
         }
       }
@@ -380,12 +402,7 @@ const server = http.createServer(async (req, res) => {
         ...(hasAvatarData ? { avatarData } : {})
       });
 
-      sendJson(res, 200, {
-        email: updatedUser.email,
-        userNumber: updatedUser.id,
-        displayName: updatedUser.display_name,
-        avatarData: updatedUser.avatar_data || ""
-      });
+      sendJson(res, 200, buildUserPayload(updatedUser));
       return;
     }
 
@@ -395,7 +412,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const messages = await getChatMessages(50);
+      const messages = await getChatMessages();
       sendJson(res, 200, { messages });
       return;
     }
@@ -416,7 +433,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       await createChatMessage(user.email, message);
-      const messages = await getChatMessages(50);
+      const messages = await getChatMessages();
       sendJson(res, 200, { messages });
       return;
     }
