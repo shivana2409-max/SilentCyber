@@ -26,7 +26,7 @@ function get(sql, params = []) {
         return;
       }
 
-      resolve(row);
+      resolve(row || null);
     });
   });
 }
@@ -39,7 +39,7 @@ function all(sql, params = []) {
         return;
       }
 
-      resolve(rows);
+      resolve(rows || []);
     });
   });
 }
@@ -48,8 +48,25 @@ function hashPassword(password) {
   return crypto.createHash("sha256").update(password, "utf8").digest("hex");
 }
 
+function createToken() {
+  return crypto.randomBytes(24).toString("hex");
+}
+
 function nowIso() {
   return new Date().toISOString();
+}
+
+function defaultDisplayName(email) {
+  return email.split("@")[0] || "usuario";
+}
+
+async function ensureColumn(tableName, columnName, sqlDefinition) {
+  const columns = await all(`PRAGMA table_info(${tableName})`);
+  const exists = columns.some((column) => column.name === columnName);
+
+  if (!exists) {
+    await run(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${sqlDefinition}`);
+  }
 }
 
 async function initDb() {
@@ -62,6 +79,11 @@ async function initDb() {
     )
   `);
 
+  await ensureColumn("users", "display_name", "TEXT");
+  await run(
+    "UPDATE users SET display_name = COALESCE(display_name, substr(email, 1, instr(email, '@') - 1))"
+  );
+
   await run(`
     CREATE TABLE IF NOT EXISTS login_history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,15 +91,58 @@ async function initDb() {
       logged_in_at TEXT NOT NULL
     )
   `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email TEXT NOT NULL,
+      token TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL
+    )
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      message TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `);
+}
+
+async function createSession(email) {
+  const token = createToken();
+  await run(
+    "INSERT INTO sessions (email, token, created_at) VALUES (?, ?, ?)",
+    [email, token, nowIso()]
+  );
+  return token;
+}
+
+async function buildAuthPayload(email) {
+  const user = await get(
+    "SELECT email, display_name FROM users WHERE email = ?",
+    [email]
+  );
+  const token = await createSession(email);
+
+  return {
+    email: user.email,
+    displayName: user.display_name || defaultDisplayName(email),
+    token
+  };
 }
 
 async function createUser(email, password) {
   const normalizedEmail = email.trim().toLowerCase();
   const createdAt = nowIso();
+  const displayName = defaultDisplayName(normalizedEmail);
 
   await run(
-    "INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)",
-    [normalizedEmail, hashPassword(password), createdAt]
+    "INSERT INTO users (email, password_hash, created_at, display_name) VALUES (?, ?, ?, ?)",
+    [normalizedEmail, hashPassword(password), createdAt, displayName]
   );
 
   await run(
@@ -85,7 +150,7 @@ async function createUser(email, password) {
     [normalizedEmail, createdAt]
   );
 
-  return { email: normalizedEmail };
+  return buildAuthPayload(normalizedEmail);
 }
 
 async function loginUser(email, password) {
@@ -104,13 +169,14 @@ async function loginUser(email, password) {
     [normalizedEmail, nowIso()]
   );
 
-  return { email: normalizedEmail };
+  return buildAuthPayload(normalizedEmail);
 }
 
 async function getHistory() {
   const users = await all(`
     SELECT
       users.email,
+      users.display_name,
       users.created_at,
       MAX(login_history.logged_in_at) AS last_login_at
     FROM users
@@ -122,9 +188,71 @@ async function getHistory() {
   return { users };
 }
 
+async function getUserByToken(token) {
+  if (!token) {
+    return null;
+  }
+
+  return get(
+    `
+      SELECT users.email, users.display_name
+      FROM sessions
+      INNER JOIN users ON users.email = sessions.email
+      WHERE sessions.token = ?
+      ORDER BY sessions.id DESC
+      LIMIT 1
+    `,
+    [token]
+  );
+}
+
+async function updateDisplayName(email, displayName) {
+  await run(
+    "UPDATE users SET display_name = ? WHERE email = ?",
+    [displayName, email]
+  );
+
+  return get(
+    "SELECT email, display_name FROM users WHERE email = ?",
+    [email]
+  );
+}
+
+async function createChatMessage(email, message) {
+  const user = await get(
+    "SELECT display_name FROM users WHERE email = ?",
+    [email]
+  );
+  const createdAt = nowIso();
+  const displayName = user?.display_name || defaultDisplayName(email);
+
+  await run(
+    "INSERT INTO chat_messages (email, display_name, message, created_at) VALUES (?, ?, ?, ?)",
+    [email, displayName, message, createdAt]
+  );
+}
+
+async function getChatMessages(limit = 50) {
+  const rows = await all(
+    `
+      SELECT id, email, display_name, message, created_at
+      FROM chat_messages
+      ORDER BY id DESC
+      LIMIT ?
+    `,
+    [limit]
+  );
+
+  return rows.reverse();
+}
+
 module.exports = {
   initDb,
   createUser,
   loginUser,
-  getHistory
+  getHistory,
+  getUserByToken,
+  updateDisplayName,
+  createChatMessage,
+  getChatMessages
 };
