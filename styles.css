@@ -247,6 +247,7 @@ h2 {
 .chat-body {
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
 
 .chat-header {
@@ -254,6 +255,7 @@ h2 {
   justify-content: space-between;
   gap: 12px;
   align-items: center;
+  min-width: 0;
 }
 
 .chat-name {
@@ -268,6 +270,9 @@ h2 {
 
 .chat-text {
   line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .value {
