@@ -248,14 +248,16 @@ h2 {
   display: grid;
   gap: 8px;
   min-width: 0;
+  justify-items: start;
 }
 
 .chat-header {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 35ch) auto;
   gap: 12px;
   align-items: center;
   min-width: 0;
+  width: 100%;
 }
 
 .chat-name {
@@ -269,10 +271,13 @@ h2 {
 }
 
 .chat-text {
+  display: block;
   line-height: 1.45;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
+  max-width: 35ch;
+  width: 100%;
 }
 
 .value {
@@ -453,9 +458,13 @@ h2 {
   }
 
   .section-head,
-  .info-item,
-  .chat-header {
+  .info-item {
     flex-direction: column;
+  }
+
+  .chat-header {
+    grid-template-columns: 1fr;
+    align-items: flex-start;
   }
 
   .chat-item {
