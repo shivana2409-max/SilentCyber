@@ -147,6 +147,11 @@ function containsBannedContent(value) {
   return tokens.some((token) => bannedExactWords.has(token));
 }
 
+function hasRepeatedLetterSpam(value, maxRepeatedLetters = 15) {
+  const normalized = normalizeText(value).replace(/[^a-z0-9]/g, "");
+  return new RegExp(`([a-z0-9])\\1{${maxRepeatedLetters - 1},}`).test(normalized);
+}
+
 function validateDisplayName(displayName) {
   if (!displayName) {
     return "Debes escribir un nombre visible.";
@@ -176,10 +181,8 @@ function validateMessage(message) {
     return "El mensaje no puede superar 300 caracteres.";
   }
 
-  const totalLetters = normalizeText(message).replace(/[^a-z0-9]/g, "").length;
-
-  if (totalLetters > 15) {
-    return "El mensaje no puede tener mas de 15 letras en total.";
+  if (hasRepeatedLetterSpam(message, 15)) {
+    return "No puedes enviar letras repetidas demasiadas veces seguidas.";
   }
 
   if (containsBannedContent(message)) {

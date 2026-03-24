@@ -190,11 +190,13 @@ function wrapMessageText(message, maxCharsPerLine = 32) {
     .join("\n");
 }
 
-function hasMessageLetterLimitExceeded(message, maxLetters = 15) {
-  return String(message || "")
+function hasRepeatedLetterSpam(message, maxRepeatedLetters = 15) {
+  const normalized = String(message || "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-zA-Z0-9]/g, "").length > maxLetters;
+    .replace(/[^a-zA-Z0-9]/g, "");
+
+  return new RegExp(`([a-zA-Z0-9])\\1{${maxRepeatedLetters - 1},}`).test(normalized);
 }
 
 function renderInfo(container, items, note = "") {
@@ -844,8 +846,8 @@ async function sendChatMessage(event) {
     return;
   }
 
-  if (hasMessageLetterLimitExceeded(message, 15)) {
-    flashChatError("El mensaje no puede tener mas de 15 letras en total.", true);
+  if (hasRepeatedLetterSpam(message, 15)) {
+    flashChatError("No puedes enviar letras repetidas demasiadas veces seguidas.", true);
     return;
   }
 
@@ -869,7 +871,7 @@ async function sendChatMessage(event) {
   } catch (error) {
     const messageText = error instanceof Error ? error.message : "No se pudo enviar el mensaje.";
     const shouldFlash =
-      /mas de 15 letras en total/i.test(messageText) ||
+      /letras repetidas demasiadas veces seguidas/i.test(messageText) ||
       /mensaje no esta permitido/i.test(messageText);
 
     if (shouldFlash) {
