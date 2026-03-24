@@ -132,6 +132,63 @@ function renderAvatarMarkup(user, extraClass = "") {
   return `<span class="${classes}">${escapeHtml(getAvatarText(user?.displayName))}</span>`;
 }
 
+function chunkLongWord(word, maxChars) {
+  if (word.length <= maxChars) {
+    return [word];
+  }
+
+  const parts = [];
+
+  for (let index = 0; index < word.length; index += maxChars) {
+    parts.push(word.slice(index, index + maxChars));
+  }
+
+  return parts;
+}
+
+function wrapMessageText(message, maxCharsPerLine = 32) {
+  const text = String(message || "").replace(/\r\n/g, "\n");
+  const paragraphs = text.split("\n");
+
+  return paragraphs
+    .map((paragraph) => {
+      const words = paragraph.split(/\s+/).filter(Boolean);
+
+      if (!words.length) {
+        return "";
+      }
+
+      const lines = [];
+      let currentLine = "";
+
+      for (const word of words) {
+        const safeWordParts = chunkLongWord(word, maxCharsPerLine);
+
+        for (const part of safeWordParts) {
+          if (!currentLine) {
+            currentLine = part;
+            continue;
+          }
+
+          if ((currentLine + " " + part).length <= maxCharsPerLine) {
+            currentLine += " " + part;
+            continue;
+          }
+
+          lines.push(currentLine);
+          currentLine = part;
+        }
+      }
+
+      if (currentLine) {
+        lines.push(currentLine);
+      }
+
+      return lines.join("\n");
+    })
+    .join("\n");
+}
+
 function renderInfo(container, items, note = "") {
   container.classList.remove("empty");
   const cards = items
@@ -253,7 +310,7 @@ function renderChatMessages(messages) {
               <strong class="chat-name">${escapeHtml(message.display_name)}</strong>
               <span class="chat-meta">${escapeHtml(formatDate(message.created_at))}</span>
             </div>
-            <div class="chat-text">${escapeHtml(message.message)}</div>
+            <div class="chat-text">${escapeHtml(wrapMessageText(message.message, 32))}</div>
           </div>
         </article>
       `
