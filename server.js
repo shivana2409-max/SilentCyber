@@ -176,6 +176,15 @@ function validateMessage(message) {
     return "El mensaje no puede superar 300 caracteres.";
   }
 
+  const hasTooLongWord = message
+    .split(/\s+/)
+    .filter(Boolean)
+    .some((word) => normalizeText(word).replace(/[^a-z0-9]/g, "").length > 15);
+
+  if (hasTooLongWord) {
+    return "No puedes enviar palabras de mas de 15 letras.";
+  }
+
   if (containsBannedContent(message)) {
     return "Ese mensaje no esta permitido.";
   }

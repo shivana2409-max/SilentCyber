@@ -362,6 +362,13 @@ h2 {
   box-shadow: 0 0 0 3px rgba(78, 162, 255, 0.14);
 }
 
+.field textarea.field-error,
+.field input.field-error {
+  border-color: rgba(255, 126, 126, 0.82);
+  box-shadow: 0 0 0 3px rgba(255, 126, 126, 0.18);
+  background: rgba(255, 126, 126, 0.06);
+}
+
 .auth-actions {
   display: flex;
   flex-wrap: wrap;

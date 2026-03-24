@@ -34,6 +34,7 @@ let currentServerMode = "local";
 let currentUser = null;
 let pendingAvatarData = null;
 let chatPollId = null;
+let chatErrorTimerId = null;
 
 function isServerMode() {
   return window.location.protocol.startsWith("http");
@@ -189,6 +190,13 @@ function wrapMessageText(message, maxCharsPerLine = 32) {
     .join("\n");
 }
 
+function hasWordOverLimit(message, maxLength = 15) {
+  return String(message || "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .some((word) => word.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]/g, "").length > maxLength);
+}
+
 function renderInfo(container, items, note = "") {
   container.classList.remove("empty");
   const cards = items
@@ -223,6 +231,31 @@ function setProfileStatus(message, isError = false) {
 function setChatStatus(message, isError = false) {
   chatStatus.textContent = message;
   chatStatus.style.color = isError ? "#ffb4b4" : "";
+}
+
+function clearChatErrorState() {
+  if (chatErrorTimerId) {
+    window.clearTimeout(chatErrorTimerId);
+    chatErrorTimerId = null;
+  }
+
+  chatInput.classList.remove("field-error");
+}
+
+function flashChatError(message, clearMessage = false) {
+  clearChatErrorState();
+  setChatStatus(message, true);
+  chatInput.classList.add("field-error");
+
+  if (clearMessage) {
+    chatInput.value = "";
+  }
+
+  chatErrorTimerId = window.setTimeout(() => {
+    chatInput.classList.remove("field-error");
+    setChatStatus("");
+    chatErrorTimerId = null;
+  }, 3000);
 }
 
 function formatDate(value) {
@@ -811,7 +844,13 @@ async function sendChatMessage(event) {
     return;
   }
 
+  if (hasWordOverLimit(message, 15)) {
+    flashChatError("No puedes enviar palabras de mas de 15 letras.", true);
+    return;
+  }
+
   sendChatBtn.disabled = true;
+  clearChatErrorState();
   setChatStatus("Enviando mensaje...");
 
   try {
@@ -828,10 +867,16 @@ async function sendChatMessage(event) {
     renderChatMessages(data.messages || []);
     setChatStatus("Mensaje enviado.");
   } catch (error) {
-    setChatStatus(
-      error instanceof Error ? error.message : "No se pudo enviar el mensaje.",
-      true
-    );
+    const messageText = error instanceof Error ? error.message : "No se pudo enviar el mensaje.";
+    const shouldFlash =
+      /palabras? de mas de 15 letras/i.test(messageText) ||
+      /mensaje no esta permitido/i.test(messageText);
+
+    if (shouldFlash) {
+      flashChatError(messageText, true);
+    } else {
+      setChatStatus(messageText, true);
+    }
   } finally {
     sendChatBtn.disabled = false;
   }
